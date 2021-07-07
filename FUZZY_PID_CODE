@@ -1,0 +1,471 @@
+#include "LiquidCrystal.h"
+#include <Wire.h> 
+#include <LiquidCrystal_I2C.h>
+
+//LiquidCrystal_I2C lcd(0x3F, 16, 2);
+
+using namespace std;
+int Calc=0;
+int NbTopsFan; 
+int motor_enable=4;
+int moteur_pwm=3;
+
+int hallsensor = 2; //Pin du capteur à effet Hall
+
+typedef struct{ char fantype; unsigned int fandiv; }fanspec;
+unsigned long currentT,pastT;
+ 
+
+fanspec fanspace[3]={{0,1},{1,2},{2,8}}; char fan = 1;
+
+//*********** FUZZIFICATION ************
+//***  Erreur  ***
+
+double E_NL (double A)
+{
+    double output=0 ,DE;
+    if (A<=0){output=1;}
+    else if (A<=40 && A>0){output=(-A/40 + 1);}
+    else {output=0;}
+    return output;
+    }
+double E_NS (double A)
+{
+    double output=0;
+    if (A<=53 && A>=26){output=((A-26)/27);}
+    else if (A<=120 && A>53){output=((-A+120)/67);}
+    else {output=0;}
+    return output;
+    }
+
+double E_ZE (double A)
+{
+    double output=0;
+    if (A<=80 && A>=40){output=(A/40 - 1);}
+    else if (A<=120 && A>80){output=(-A/40 + 3);}
+    else {output=0;}
+    return output;
+    }
+
+double E_PS (double A)
+{
+    double output=0;
+    if (A<=106 && A>=40){output=((A-40)/66);}
+    else if (A<=133 && A>106){output=((-A+133)/27);}
+    else {output=0;}
+    return output;
+    }
+
+double E_PL (double A)
+{
+    double output=0;
+    if (A>=160){output = 1;}
+    else if (A<160 && A>=120){output=(A/40 - 3);}
+    else {output=0;}
+    return output;
+    }
+
+
+//***  Derivé de L'ERREUR  ***
+
+double DE_NL (double DA)
+{
+    double output;
+    if (DA <= -1200 ){output=1;}
+    else if (DA<=-900 && DA>-1200){output=((-DA/300)-3);}
+    else output=0;
+    return output;
+    }
+
+    double DE_NS (double DA)
+    {
+    double output;
+    if (DA < -810 && DA > -1080){output=((DA/270)+4);}
+    else if (DA < -300 && DA > -810){output=(-(DA+300)/510);}
+    else output=0;
+    return output;
+    }
+
+    double DE_ZE (double DA)
+    {
+    double output;
+    if (DA < -600 && DA > -900){output=((DA/300)+3);}
+    else if (DA < -300 && DA > -600){output=((-DA/300)-1);}
+    else output=0;
+    return output;
+    }
+
+    double DE_PS (double DA)
+    {
+    double output;
+    if (DA < -390 && DA > -900){output=((DA+900)/510);}
+    else if (DA < -120 && DA > -390){output=(-(DA+120)/270);}
+    else output=0;
+    return output;
+    }
+
+    double DE_PL (double DA)
+    {
+    double output;
+    if (DA >= 0){output=1;}
+    else if (DA > -300 && DA < 0){output=((DA/300)+1);}
+    else output=0;
+    return output;
+    }
+
+ 
+void rpm () //codeur incrémental
+
+{ NbTopsFan++; }
+
+ double ENL,ENS,EZE,EPS,EPL, Sortie=0,pi=3.141592653589793238462643383279502884;
+ double E=0,de,sortie,feedback,output,v1,v2,v3,v4,Erreur=0,DENL,DENS,DEZE,DEPS,DEPL,Consigne=0;
+ int n,i;
+ bool T_E_NL,T_E_NS,T_E_ZE,T_E_PS,T_E_PL,T_DE_NL,T_DE_NS,T_DE_ZE,T_DE_PS,T_DE_PL;
+
+
+int relay =13;
+ 
+void setup()
+{ pinMode(hallsensor, INPUT);
+Serial.begin(9600);
+attachInterrupt(0, rpm, RISING);
+pinMode(motor_enable, OUTPUT);
+pinMode(moteur_pwm, OUTPUT);
+digitalWrite(motor_enable,0);
+pinMode(relay, OUTPUT);
+ 
+}
+void loop ()
+{
+  NbTopsFan = 0;  int cond=0;
+  Consigne=2000;
+Erreur=Consigne-Calc;
+Consigne=Consigne*(2*pi/60);
+
+output = Calc*(2*pi/60);
+E=Consigne-output;
+Serial.print (Erreur);
+Serial.print ("    E   ");
+cond=Consigne*0.02;
+
+digitalWrite(relay,HIGH); 
+ while (E<=cond && E>= -cond) 
+ {
+analogWrite(3, sortie);
+Serial.print (Erreur);
+Serial.print ("    E   ");
+Serial.print (Calc, DEC);
+Serial.print (" RPM   ");
+Serial.print (millis());
+Serial.print ("    ms\r\n");
+  }
+double kp[25]={0},ki[25]={0},kd[25]={0},dmin[25]={0},  k_p=0,k_i=0,k_d=0,elapsedT,lastE=0,oldtime,ntime;        
+sei();
+delay (10);
+
+cli();
+ntime=millis()-oldtime; //finds the time
+Calc=(NbTopsFan*60000*2/ntime); 
+oldtime=millis();
+        
+currentT = millis()/1000;   
+elapsedT=currentT-pastT;
+de=(E - lastE)/elapsedT; // Calcul de la dérivé de l'erreur
+
+//**************** INFERENCE ********************
+//*** Erreur ***
+
+ENL = E_NL(E);
+if (ENL==0){T_E_NL=false;}
+else {T_E_NL=true;}
+
+ENS = E_NS (E);
+if (ENS==0){T_E_NS=false;}
+else {T_E_NS=true;}
+
+EZE = E_ZE (E);
+if (EZE==0){T_E_ZE=false;}
+else {T_E_ZE=true;}
+
+
+EPS = E_PS (E);
+if (EPS==0){T_E_PS=false;}
+else {T_E_PS=true;}
+
+
+EPL = E_PL (E);
+if (EPL==0){T_E_PL=false;}
+else {T_E_PL=true;}
+
+//***  Derivé de l'Erreur
+
+DENL = DE_NL (de);
+if (DENL==0){T_DE_NL=false;}
+else {T_DE_NL=true;}
+
+DENS = DE_NS (de);
+if (DENS==0){T_DE_NS=false;}
+else {T_DE_NS=true;}
+
+DEZE = DE_ZE (de);
+if (DEZE==0){T_DE_ZE=false;}
+else {T_DE_ZE=true;}
+
+
+DEPS = DE_PS (de);
+if (DEPS==0){T_DE_PS=false;}
+else {T_DE_PS=true;}
+
+
+DEPL = DE_PL (de);
+if (DEPL==0){T_DE_PL=false;}
+else {T_DE_PL=true;}
+
+
+      // **************************** DEFFUZIFICATION *********************
+
+   n=0;
+
+   // ERREUR : NL true  
+   if (T_E_NL==true && T_DE_NL==true)
+   {
+       dmin[0] = min(ENL , DENL);
+       kp[0]=10*(dmin[0] + 2);//PVL
+       ki[0]=12; //PM
+       kd[0]=(1-dmin[0])/3; //PVS
+       n++;
+   }
+     if (T_E_NL==true && T_DE_NS==true)
+   {
+       dmin[1] = min(ENL , DENS);
+       kp[1]=10*(dmin[1] + 2); //PVL
+       ki[1]=12; //PM
+       kd[1]=(5-dmin[1])/12; //PMS
+       n++;
+   }
+    if (T_E_NL==true && T_DE_ZE==true)
+   {
+       dmin[2] = min(ENL , DEZE);
+       kp[2]=10*(dmin[2] + 2); //PVL
+       ki[2]=12; //PM
+       kd[2]=0.5; //PM
+       n++;
+   }
+    if (T_E_NL==true && T_DE_PS==true)
+   {
+       dmin[3] = min(ENL , DEPS);
+       kp[3]=10*(dmin[3] + 2); //PVL
+       ki[3]=12; //PM
+       kd[3]=(dmin[3]+9)/12; //PL
+       n++;
+   }
+    if (T_E_NL==true && T_DE_PL==true)
+   {
+       dmin[4] = min(ENL , DEPL);
+       kp[4]=10*(dmin[4] + 2); //PVL
+       ki[4]=12; //PM
+       kd[4]=(dmin[4]+2)/3; //PVL
+       n++;
+   }
+
+   // ERREUR NS true
+
+     if (T_E_NS==true && T_DE_NL==true)
+   {
+       dmin[5] = min(ENS , DENL);
+       kp[5]=(5*dmin[5] + 35)/2; //PML
+       ki[5]=(10-2*dmin[5]); // PMS
+       kd[5]=(5-dmin[5])/12; //PMS
+       n++;
+   }
+     if (T_E_NS==true && T_DE_NS==true)
+   {
+       dmin[6] = min(ENS , DENS);
+       kp[6]=(5*dmin[6] + 35)/2; //PML
+       ki[6]=(10-2*dmin[6]); //PMS
+       kd[6]=(dmin[6]+7)/12; //PML
+       n++;
+   }
+    if (T_E_NS==true && T_DE_ZE==true)
+   {
+       dmin[7] = min(ENS , DEZE);
+       kp[7]=(5*dmin[7] + 35)/2; //PML
+       ki[7]=(10-2*dmin[7]); //PMS
+       kd[7]=(dmin[7]+9)/12; //PL
+       n++;
+   }
+    if (T_E_NS==true && T_DE_PS==true)
+   {
+       dmin[8] = min(ENS , DEPS);
+       kp[8]=(5*dmin[8] + 45)/2; //PL
+       ki[8]=(10-2*dmin[8]); //PMS
+       kd[8]=(dmin[8]+2)/3; //PVL
+       n++;
+   }
+    if (T_E_NS==true && T_DE_PL==true)
+   {
+       dmin[9] = min(ENS , DEPL);
+       kp[9]=10*(dmin[9] + 2); //PVL
+       ki[9]=(10-2*dmin[9]); //PMS
+       kd[9]=(dmin[9]+2)/3; //PVL
+       n++;
+   }
+
+// ERREUR ZE true
+
+     if (T_E_ZE==true && T_DE_NL==true)
+   {
+       dmin[10] = min(EZE , DENL);
+       kp[10]=(10 - 10*dmin[10]); //PVS
+       ki[10]=(6-2*dmin[10]); //PS
+       kd[10]=0.5; //PM
+       n++;
+   }
+     if (T_E_ZE==true && T_DE_NS==true)
+   {
+       dmin[11] = min(EZE , DENS);
+       kp[11]=(10 - 10*dmin[11]); //PVS
+       ki[11]=(6-2*dmin[11]); //PS
+       kd[11]=(dmin[11]+9)/12; //PL
+       n++;
+   }
+     if (T_E_ZE==true && T_DE_ZE==true)
+   {
+       dmin[12] = min(EZE , DEZE);
+       kp[12]=(15 - 5*dmin[12])/2; //PS
+       ki[12]=(8-8*dmin[12]); //PVS
+       kd[12]=(dmin[12]+9)/12; //PL
+       n++;
+   }
+     if (T_E_ZE==true && T_DE_PS==true)
+   {
+       dmin[13] = min(EZE , DEPS);
+       kp[13]=(25-15*dmin[13])/2; //PMS
+       ki[13]=(6-2*dmin[13]); //PS
+       kd[13]=(dmin[13]+2)/3; //PVL
+       n++;
+   }
+    if (T_E_ZE==true && T_DE_PL==true)
+   {
+       dmin[14] = min(EZE , DEPL);
+       kp[14]=(25-15*dmin[14])/2; //PMS
+       ki[14]=(6-2*dmin[14]); //PS
+       kd[14]=(dmin[14]+2)/3; //PVL
+       n++;
+   }
+
+// ERREUR PS true
+
+     if (T_E_PS==true && T_DE_NL==true)
+   {
+       dmin[15] = min(EPS , DENL);
+       kp[15]=(10 - 10*dmin[15]); //PVS
+       kd[15]=(10 - 2*dmin[15]); //PMS
+       ki[15]=(dmin[15]+7)/12; //PML
+       n++;
+   }
+     if (T_E_PS==true && T_DE_NS==true)
+   {
+       dmin[16] = min(EPS , DENS);
+       kp[16]=(10 - 10*dmin[16]); //PVS
+       ki[16]=(10 - 2*dmin[16]); //PMS
+       kd[16]=(dmin[16]+7)/12; //PML
+       n++;
+   }
+    if (T_E_PS==true && T_DE_ZE==true)
+   {
+       dmin[17] = min(EPS , DEZE);
+       kp[17]=(15 - 5*dmin[17])/2; //PS
+       ki[17]=(10 - 2*dmin[17]); //PMS
+       kd[17]=(dmin[17]+7)/12; //PML
+       n++;
+   }
+     if (T_E_PS==true && T_DE_PS==true)
+   {
+       dmin[18] = min(EPS , DEPS);
+       kp[18]=(25-15*dmin[18])/2; //PMS
+       ki[18]=(10 - 2*dmin[18]); //PMS
+       kd[18]=(dmin[18]+9)/12; //PL
+       n++;
+   }
+     if (T_E_PS==true && T_DE_PL==true)
+   {
+       dmin[19] = min(EPS , DEPL);
+       kp[19]=(25-15*dmin[19])/2; //PMS
+       ki[19]=(10 - 2*dmin[19]); //PMS
+       kd[19]=(dmin[19]+2)/3; //PVL
+       n++;
+   }
+
+// ERREUR PL true
+
+     if (T_E_PL==true && T_DE_NL==true)
+   {
+       dmin[20] = min(EPL , DENL);
+       kp[20]= 10*(dmin[20] + 2); //PVL
+       ki[20]=12; //PM
+       kd[20]=(dmin[20]+2)/3; //PVL
+       n++;
+   }
+     if (T_E_PL==true && T_DE_NS==true)
+   {
+       dmin[21] = min(EPL , DENS);
+       kp[21]=10*(dmin[21] + 2); //PVL
+       ki[21]=12; //PM
+       kd[21]=(dmin[21]+2)/3; //PVL
+       n++;
+   }
+     if (T_E_PL==true && T_DE_ZE==true)
+   {
+       dmin[22] = min(EPL , DEZE);
+       kp[22]=10*(dmin[22] + 2); //PVL
+       ki[22]=12; //PM
+       kd[22]=(dmin[22]+2)/3; //PVL
+       n++;
+   }
+     if (T_E_PL==true && T_DE_PS==true)
+   {
+       dmin[23] = min(EPL , DEPS);
+       kp[23]=10*(dmin[23] + 2); //PVL
+       ki[23]=12; //PM
+       kd[23]=(dmin[23]+2)/3; //PVL
+       n++;
+   }
+     if (T_E_PL==true && T_DE_PL==true)
+   {
+       dmin[24] = min(EPL , DEPL);
+       kp[24]=10*(dmin[24] + 2); //PVL
+       ki[24]=12; //PM
+       kd[24]=(dmin[24]+2)/3; //PVL
+       n++;
+   }
+for (int i = 0; i < 25; i++)
+{
+k_p=kp[i]+k_p;
+k_i=ki[i]+k_i;
+k_d=kd[i]+k_d;
+}
+k_p=k_p/n;
+k_i=k_i/n;
+k_d=k_d/n;
+
+//********************** pid setup **************************
+
+double cumE, rateE;
+ 
+        cumE += E * elapsedT;                //Integrale
+        rateE = de;   // compute derivative
+ 
+        sortie = k_p*E + k_i*cumE + k_d*rateE;     //output du PID                
+ 
+        lastE = E;                                //on sauvegrade l'erreur précedente
+        pastT = currentT;                        //on sauvegrade le temps actuel
+ 
+        analogWrite(3, sortie);                //signal de commande du MCC
+ 
+//************************************* 
+
+Serial.print (Calc, DEC);
+Serial.print (" RPM\r\n");
+  }
