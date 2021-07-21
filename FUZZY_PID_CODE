@@ -19,7 +19,7 @@ unsigned long currentT,pastT;
 fanspec fanspace[3]={{0,1},{1,2},{2,8}}; char fan = 1;
 
 //*********** FUZZIFICATION ************
-//***  Erreur  ***
+//***  Error  ***
 
 double E_NL (double A)
 {
@@ -66,7 +66,7 @@ double E_PL (double A)
     }
 
 
-//***  Derivé de L'ERREUR  ***
+//***  Error change ***
 
 double DE_NL (double DA)
 {
@@ -114,7 +114,7 @@ double DE_NL (double DA)
     }
 
  
-void rpm () //codeur incrémental
+void rpm () //Incremntal coder
 
 { NbTopsFan++; }
 
@@ -139,9 +139,9 @@ pinMode(relay, OUTPUT);
 void loop ()
 {
   NbTopsFan = 0;  int cond=0;
-  Consigne=2000;
-Erreur=Consigne-Calc;
-Consigne=Consigne*(2*pi/60);
+  Consigne=2000;           // INPUT in RPM
+Erreur=Consigne-Calc; 
+Consigne=Consigne*(2*pi/60);  //INPUT from RPM to rad/s
 
 output = Calc*(2*pi/60);
 E=Consigne-output;
@@ -171,10 +171,10 @@ oldtime=millis();
         
 currentT = millis()/1000;   
 elapsedT=currentT-pastT;
-de=(E - lastE)/elapsedT; // Calcul de la dérivé de l'erreur
+de=(E - lastE)/elapsedT; // find the Error change
 
 //**************** INFERENCE ********************
-//*** Erreur ***
+//*** Error ***
 
 ENL = E_NL(E);
 if (ENL==0){T_E_NL=false;}
@@ -198,7 +198,7 @@ EPL = E_PL (E);
 if (EPL==0){T_E_PL=false;}
 else {T_E_PL=true;}
 
-//***  Derivé de l'Erreur
+//***  Error change
 
 DENL = DE_NL (de);
 if (DENL==0){T_DE_NL=false;}
@@ -227,7 +227,7 @@ else {T_DE_PL=true;}
 
    n=0;
 
-   // ERREUR : NL true  
+   // ERROR : NL true  
    if (T_E_NL==true && T_DE_NL==true)
    {
        dmin[0] = min(ENL , DENL);
@@ -269,7 +269,7 @@ else {T_DE_PL=true;}
        n++;
    }
 
-   // ERREUR NS true
+   // ERROR NS true
 
      if (T_E_NS==true && T_DE_NL==true)
    {
@@ -312,7 +312,7 @@ else {T_DE_PL=true;}
        n++;
    }
 
-// ERREUR ZE true
+// ERROR ZE true
 
      if (T_E_ZE==true && T_DE_NL==true)
    {
@@ -355,7 +355,7 @@ else {T_DE_PL=true;}
        n++;
    }
 
-// ERREUR PS true
+// ERROR PS true
 
      if (T_E_PS==true && T_DE_NL==true)
    {
@@ -398,7 +398,7 @@ else {T_DE_PL=true;}
        n++;
    }
 
-// ERREUR PL true
+// ERRoR PL true
 
      if (T_E_PL==true && T_DE_NL==true)
    {
@@ -447,22 +447,23 @@ k_i=ki[i]+k_i;
 k_d=kd[i]+k_d;
 }
 k_p=k_p/n;
-k_i=k_i/n;
+k_i=k_i/n;   // KP KI KD value
 k_d=k_d/n;
 
 //********************** pid setup **************************
 
 double cumE, rateE;
  
-        cumE += E * elapsedT;                //Integrale
+        cumE += E * elapsedT;                //Integral
         rateE = de;   // compute derivative
  
         sortie = k_p*E + k_i*cumE + k_d*rateE;     //output du PID                
  
-        lastE = E;                                //on sauvegrade l'erreur précedente
-        pastT = currentT;                        //on sauvegrade le temps actuel
+        lastE = E;                                //we save actual error
  
-        analogWrite(3, sortie);                //signal de commande du MCC
+        pastT = currentT;                        //we save actual time
+ 
+        analogWrite(3, sortie);                //Command signal of the DC motor
  
 //************************************* 
 
